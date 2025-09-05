@@ -1385,3 +1385,273 @@ ConsultationTypeService.setAsDefault(id, supabase)
 - Appointment booking automatically adjusts time slots based on selected consultation type
 - Preparation requirements display prominently during appointment creation
 - Statistics and usage tracking for administrative insights
+
+### 26. Dashboard Metrics and Analytics System (NEW)
+
+The dashboard system provides comprehensive clinic analytics with real-time metrics, KPI cards, charts, and widgets. It's built using Next.js 15's Server/Client Component architecture with Recharts for visualizations.
+
+#### Dashboard Architecture Overview
+
+```typescript
+/src/features/dashboard/
+├── components/
+│   ├── cards/              # KPI and metric cards
+│   │   ├── KPICard.tsx     # Cards with trend indicators
+│   │   └── MetricCard.tsx  # Simple metric display cards
+│   ├── charts/             # Data visualization components
+│   │   ├── RevenueChart.tsx
+│   │   └── AppointmentsChart.tsx
+│   ├── widgets/            # Dashboard widgets
+│   ├── status-cards.tsx    # Clinic info and subscription status
+│   └── action-cards.tsx    # Quick action buttons
+├── services/
+│   └── dashboard.service.ts # Metrics aggregation and data fetching
+└── types/
+    └── dashboard.types.ts   # TypeScript interfaces for dashboard data
+```
+
+#### Component Architecture Pattern
+
+**Server Component (Dashboard Page)**:
+```typescript
+// /app/(dashboard)/dashboard/page.tsx
+export default async function DashboardPage() {
+  const supabase = await createClient()
+  
+  // Fetch data server-side for better performance
+  const dashboardData = await DashboardService.getMetrics(clinicId, supabase)
+  
+  return (
+    <div className="space-y-6">
+      {/* Pass data to client components */}
+      <StatusCards clinic={dashboardData.clinic} subscription={dashboardData.subscription} />
+      <KPICards metrics={dashboardData.kpis} />
+      <ChartsSection data={dashboardData.charts} />
+    </div>
+  )
+}
+```
+
+**Client Components (Interactive Elements)**:
+```typescript
+// All chart and interactive components need "use client"
+"use client"
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { LineChart, Line, ResponsiveContainer } from "recharts"
+
+export function RevenueChart({ data }: { data: ChartData[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Receita Mensal</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data}>
+            <Line dataKey="value" stroke="#8884d8" />
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  )
+}
+```
+
+#### Critical Implementation Issues and Solutions
+
+**1. Icon Props Serialization Error**
+**Problem**: Passing Lucide icon components as props causes "Functions cannot be passed directly to Client Components" error.
+
+**Solution**: Use internal icon selection instead of props:
+```typescript
+// ❌ Don't pass icons as props
+<KPICard title="Revenue" value="$1000" icon={DollarSign} />
+
+// ✅ Use internal icon selection
+const getIcon = () => {
+  const titleLower = title.toLowerCase()
+  if (titleLower.includes('receita')) return DollarSign
+  if (titleLower.includes('pacientes')) return Users
+  if (titleLower.includes('ocupação')) return BarChart3
+  return TrendingUp // default
+}
+```
+
+**2. Recharts Client Component Requirements**
+**Problem**: All Recharts components must be Client Components but dashboard page should be Server Component for data fetching.
+
+**Solution**: Split architecture - Server Component for data, Client Components for charts:
+```typescript
+// Server Component fetches data
+const chartData = await DashboardService.getRevenueChart(clinicId, supabase)
+
+// Client Component renders chart
+<RevenueChart data={chartData} />
+```
+
+**3. Supabase Join Array Handling**
+**Problem**: Supabase joins return arrays instead of expected objects, causing TypeScript errors.
+
+**Solution**: Check for arrays and extract first element:
+```typescript
+const { data: appointments } = await supabase
+  .from('appointments')
+  .select(`
+    date,
+    consultation_types (price)
+  `)
+
+// Handle the join result properly
+const processedData = appointments?.map(apt => ({
+  date: apt.date,
+  price: Array.isArray(apt.consultation_types) 
+    ? apt.consultation_types[0]?.price 
+    : apt.consultation_types?.price
+}))
+```
+
+**4. Badge Component DOM Props Warning**
+**Problem**: React warning about `iconType` prop being passed to DOM element.
+
+**Solution**: Destructure props instead of spreading:
+```typescript
+// ❌ Spreading custom props
+<Badge {...statusBadgeProps} className={cn(className, "capitalize")}>
+
+// ✅ Destructure only valid props
+const { variant, className: badgeClassName } = statusBadgeProps
+<Badge variant={variant} className={cn(badgeClassName, "capitalize")}>
+```
+
+**5. Missing Stored Procedures Fallback**
+**Problem**: Revenue chart expects `get_monthly_revenue()` stored procedure that doesn't exist.
+
+**Solution**: Implement direct query fallback:
+```typescript
+// Instead of stored procedure
+const { data, error } = await supabase.rpc('get_monthly_revenue', { clinic_id: clinicId })
+
+// Use direct query with aggregation
+const { data: appointments } = await supabase
+  .from('appointments')
+  .select(`
+    date,
+    consultation_types (price)
+  `)
+  .eq('clinic_id', clinicId)
+  .eq('status', 'completed')
+  .gte('date', sixMonthsAgo.toISOString().split('T')[0])
+
+// Manually aggregate by month
+const monthlyRevenue = appointments?.reduce((acc, apt) => {
+  const month = new Date(apt.date).toISOString().slice(0, 7)
+  const price = Array.isArray(apt.consultation_types) 
+    ? apt.consultation_types[0]?.price || 0
+    : apt.consultation_types?.price || 0
+  
+  acc[month] = (acc[month] || 0) + price
+  return acc
+}, {} as Record<string, number>)
+```
+
+#### Service Layer Pattern
+
+**Dashboard Service Structure**:
+```typescript
+export class DashboardService {
+  static async getMetrics(clinicId: string, supabase: SupabaseClient): Promise<MainDashboardMetrics> {
+    // Parallel data fetching for better performance
+    const [kpis, charts, widgets] = await Promise.all([
+      this.getKPIs(clinicId, supabase),
+      this.getCharts(clinicId, supabase), 
+      this.getWidgets(clinicId, supabase)
+    ])
+
+    return { kpis, charts, widgets }
+  }
+
+  private static async getKPIs(clinicId: string, supabase: SupabaseClient) {
+    // Graceful handling of missing data structures
+    try {
+      const revenue = await this.getMonthlyRevenue(clinicId, supabase)
+      return { monthlyRevenue: revenue }
+    } catch (error) {
+      // Return mock/default data if queries fail
+      console.warn('Dashboard KPI error:', error)
+      return { monthlyRevenue: { value: 0, change: 0, trend: 'stable' as const } }
+    }
+  }
+}
+```
+
+#### TypeScript Interface Pattern
+
+```typescript
+// /src/features/dashboard/types/dashboard.types.ts
+export interface KPIMetric {
+  value: number
+  change: number // percentage change
+  trend: 'up' | 'down' | 'stable'
+  formatted?: string // for currency/percentage display
+}
+
+export interface ChartData {
+  name: string // month/period name
+  value: number
+  formatted?: string
+}
+
+export interface MainDashboardMetrics {
+  kpis: {
+    monthlyRevenue: KPIMetric
+    totalPatients: KPIMetric
+    todayAppointments: KPIMetric
+    occupancyRate: KPIMetric
+  }
+  charts: {
+    revenue: ChartData[]
+    appointments: ChartData[]
+  }
+  widgets: {
+    upcomingAppointments: AppointmentWidget[]
+    patientBirthdays: PatientBirthdayWidget[]
+    pendingPayments: PendingPaymentWidget[]
+  }
+}
+```
+
+#### Brazilian Localization Patterns
+
+**Currency Formatting**:
+```typescript
+const formatCurrency = (value: number) => 
+  new Intl.NumberFormat('pt-BR', { 
+    style: 'currency', 
+    currency: 'BRL' 
+  }).format(value)
+```
+
+**Date Formatting**:
+```typescript
+import { format } from 'date-fns'
+import { ptBR } from 'date-fns/locale'
+
+const formatDate = (date: string | Date) => 
+  format(new Date(date), 'dd/MM/yyyy', { locale: ptBR })
+```
+
+#### Performance Considerations
+
+1. **Server-Side Data Fetching**: Keep dashboard page as Server Component for better initial load
+2. **Parallel Queries**: Use `Promise.all()` for independent data fetching
+3. **Mock Data Fallbacks**: Provide default values when database structures are missing
+4. **Component Memoization**: Use React.memo for expensive chart components
+5. **Lazy Loading**: Consider lazy loading complex charts for better perceived performance
+
+#### Integration with Existing Systems
+
+- **Subscription Status**: Dashboard checks subscription before displaying premium features
+- **Multi-tenant RLS**: All queries automatically filtered by clinic_id
+- **Real-time Updates**: Can be enhanced with Supabase Realtime subscriptions
+- **Responsive Design**: All cards and charts adapt to mobile/desktop layouts
