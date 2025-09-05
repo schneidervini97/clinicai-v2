@@ -14,7 +14,8 @@ import {
   MoreVertical,
   Archive,
   UserPlus,
-  MessageSquare
+  MessageSquare,
+  Bot
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -22,6 +23,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Switch } from '@/components/ui/switch'
+import { 
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ConversationWithPatient, Message } from '../types/chat.types'
 import { MessageBubble } from './message-bubble'
@@ -35,6 +43,7 @@ interface ChatWindowProps {
   onMarkAsRead?: (conversationId: string) => void
   onArchiveConversation?: (conversationId: string) => void
   onLinkPatient?: (conversationId: string) => void
+  onToggleAssistant?: (conversationId: string, enabled: boolean) => Promise<void>
   loading?: boolean
   className?: string
 }
@@ -46,6 +55,7 @@ export function ChatWindow({
   onMarkAsRead,
   onArchiveConversation,
   onLinkPatient,
+  onToggleAssistant,
   loading = false,
   className
 }: ChatWindowProps) {
@@ -129,6 +139,39 @@ export function ChatWindow({
               )}
             </div>
           </div>
+        </div>
+
+        {/* AI Assistant Toggle */}
+        <div className="flex items-center gap-3">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full border bg-muted/50">
+                  <Bot className={cn(
+                    "h-4 w-4",
+                    conversation.ai_assistant_enabled ? "text-primary" : "text-muted-foreground"
+                  )} />
+                  <Switch
+                    checked={conversation.ai_assistant_enabled}
+                    onCheckedChange={(enabled) => {
+                      if (onToggleAssistant) {
+                        onToggleAssistant(conversation.id, enabled)
+                      }
+                    }}
+                    size="sm"
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>
+                  {conversation.ai_assistant_enabled 
+                    ? "Assistente AI ativo - Respostas automáticas habilitadas"
+                    : "Assistente AI inativo - Sem respostas automáticas"
+                  }
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         {/* Actions */}

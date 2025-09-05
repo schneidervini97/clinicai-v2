@@ -92,3 +92,12 @@ export function formatDateTime(date: string | Date): string {
     minute: '2-digit',
   }).format(dateObj)
 }
+
+// Additional formatting functions
+export function formatCPF(cpf: string): string {
+  return applyCpfMask(cpf)
+}
+
+export function formatPhone(phone: string): string {
+  return applyPhoneMask(phone)
+}

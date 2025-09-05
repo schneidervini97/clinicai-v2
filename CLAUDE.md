@@ -27,12 +27,14 @@ Run these SQL files in Supabase SQL Editor in order:
 1. `database-migration.sql` - Core tables (profiles, clinics, subscriptions)
 2. `database-migration-patients.sql` - Patient module tables
 3. `database-migration-appointments.sql` - Appointments system tables (professionals, appointments, schedules)
-4. `database-migration-availability.sql` - Professional availability configuration (optional, for flexible scheduling)
-5. `database-migration-chat.sql` - WhatsApp chat system tables and functions
-6. `database-migration-chat-media.sql` - Media metadata fields for chat messages
-7. `database-migration-chat-media-base64.sql` - Base64 media storage and processing queue
-8. `database-migration-marketing.sql` - Marketing leads and campaign tracking (Meta Ads, Google Ads)
-9. `enable-realtime-tables.sql` - **CRITICAL**: Enable Supabase Realtime for WhatsApp tables
+4. `database-migration-consultation-types.sql` - Consultation types and professional associations
+5. `database-migration-availability.sql` - Professional availability configuration (optional, for flexible scheduling)
+6. `database-migration-chat.sql` - WhatsApp chat system tables and functions
+7. `database-migration-chat-media.sql` - Media metadata fields for chat messages
+8. `database-migration-chat-media-base64.sql` - Base64 media storage and processing queue
+9. `database-migration-chat-ai-assistant.sql` - AI assistant toggle for conversations
+10. `database-migration-marketing.sql` - Marketing leads and campaign tracking (Meta Ads, Google Ads)
+11. `enable-realtime-tables.sql` - **CRITICAL**: Enable Supabase Realtime for WhatsApp tables
 
 ## Architecture Overview
 
@@ -71,7 +73,17 @@ User redirected automatically based on `profiles.onboarding_status`.
 - **Checkout Sessions**: Created via `/api/stripe/create-checkout-session`
 - **Webhooks**: Handle subscription events at `/api/stripe/webhooks`
 - **Database Sync**: Webhooks update `subscriptions` table with Stripe data
+- **Customer Portal**: Self-service portal via `/api/stripe/create-portal-session`
 - **API Version**: Uses `2025-08-27.basil` (latest stable)
+
+### 5. Subscription Enforcement Architecture
+The system implements comprehensive subscription-based access control throughout the application:
+
+- **Middleware Enforcement**: Enhanced `middleware.ts` now checks subscription status after onboarding completion
+- **Access Control**: Blocks users with inactive subscriptions (`canceled`, `past_due`, `incomplete`, `unpaid`)
+- **Renewal Flow**: Automatic redirect to `/dashboard/assinatura/renovar` for expired subscriptions
+- **Subscription Management**: Full self-service portal at `/dashboard/configuracoes/assinatura`
+- **Status Monitoring**: Real-time subscription status checking with graceful error handling
 
 ### Database Schema (Supabase)
 
@@ -102,6 +114,12 @@ appointment_history   # Audit log for appointment changes
 availability          # Flexible time slot configuration per professional (optional)
 ```
 
+#### Consultation Types Module Tables (database-migration-consultation-types.sql)
+```sql
+consultation_types              # Custom consultation types with pricing and duration
+professional_consultation_types # Links professionals to consultation types they can perform
+```
+
 All tables use RLS policies for multi-tenant access control.
 
 ### Environment Variables
@@ -115,6 +133,10 @@ STRIPE_PUBLISHABLE_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 NEXT_PUBLIC_APP_URL=          # For Stripe redirects (http://localhost:3000)
+
+# Evolution API (WhatsApp Integration)
+EVOLUTION_API_URL=            # Server-side only - NOT NEXT_PUBLIC
+EVOLUTION_API_KEY=            # Server-side only - NOT NEXT_PUBLIC
 ```
 
 ### Brazilian Localization Features
@@ -165,18 +187,100 @@ Stripe webhooks verify signatures and handle these events:
 **Important**: Webhooks use the admin client (`createAdminClient()`) to bypass RLS policies.
 
 #### Route Protection Logic
-Middleware handles comprehensive authentication and onboarding enforcement:
+Middleware handles comprehensive authentication, onboarding, and subscription enforcement:
 - Prevents authenticated users from accessing auth pages (`/login`, `/register`)
 - Redirects unauthenticated users from protected routes (`/dashboard`, `/onboarding`)
 - **Onboarding Enforcement**: Checks `profiles.onboarding_status` and redirects accordingly:
   - `pending` → `/onboarding/clinic-info`
   - `clinic_info` → `/onboarding/subscription`
-  - `completed` → Allows dashboard access
+  - `completed` → Proceeds to subscription check
+- **Subscription Enforcement**: After onboarding completion, checks `subscriptions.status`:
+  - Inactive status (`canceled`, `past_due`, `incomplete`, `unpaid`) → `/dashboard/assinatura/renovar`
+  - Active status (`active`, `trialing`) → Allows dashboard access
+  - Exception: Always allows access to renewal page itself
 - Must return the exact `supabaseResponse` object to maintain session state
 
 ### Dashboard Architecture
 
 The dashboard uses shadcn/ui sidebar pattern with route groups:
+
+### Configuration System Architecture (UPDATED)
+
+The system includes a comprehensive configuration system at `/dashboard/configuracoes` with both implemented and planned features:
+
+#### Implemented Configuration Modules:
+- **✅ Assinatura** (`/dashboard/configuracoes/assinatura`): Full subscription management
+  - View current plan details (Basic/Premium)
+  - Monitor subscription status with visual indicators  
+  - Access Stripe Customer Portal for self-service
+  - Plan upgrade/downgrade functionality
+  - Next billing date display
+  - Feature comparison lists
+
+- **✅ Profissionais** (`/dashboard/configuracoes/profissionais`): Healthcare provider management
+  - CRUD operations for doctors, dentists, specialists
+  - Professional registration numbers (CRM, CRO, CRP)
+  - Individual schedule configuration per professional
+  - Specialty and qualification management
+
+- **✅ WhatsApp** (`/dashboard/configuracoes/whatsapp`): Chat integration setup
+  - Evolution API connection management
+  - QR code generation and scanning
+  - Real-time connection status monitoring
+  - Webhook configuration (automatic)
+
+- **✅ Tipos de Consulta** (`/dashboard/configuracoes/consultas`): Consultation types management
+  - Create custom consultation types (name, description, duration, price)
+  - Color coding for calendar visualization
+  - Professional assignment (link types to specific professionals)  
+  - Custom pricing and duration per professional
+  - Preparation requirements and instructions
+  - Default type selection for quick appointment booking
+  - Automatic creation of 5 default types for new clinics
+
+- **✅ Dados da Clínica** (`/dashboard/configuracoes/clinica`): Basic clinic information management
+  - Clinic name and contact phone
+  - Complete address with CEP integration
+  - Medical specialties selection
+  - Form validation with Brazilian standards
+
+- **✅ Assistente AI** (`/dashboard/configuracoes/assistente-ai`): AI assistant configuration
+  - Assistant name customization
+  - Enable/disable toggle for system-wide control
+  - Working hours configuration per weekday
+  - Knowledge base file upload (PDF, DOC, DOCX, TXT)
+  - Document management and removal
+
+#### Configuration Page Pattern:
+```typescript
+// Configuration sections array structure
+const configSections = [
+  {
+    title: 'Assinatura',
+    description: 'Gerencie seu plano, pagamentos e informações de cobrança',
+    icon: CreditCard,
+    href: '/dashboard/configuracoes/assinatura',
+    color: 'text-purple-600 bg-purple-100',
+    available: true  // Implemented features
+  },
+  {
+    title: 'Horários de Funcionamento', 
+    description: 'Configure horários de atendimento e disponibilidade',
+    icon: Clock,
+    href: '/dashboard/configuracoes/horarios',
+    color: 'text-green-600 bg-green-100',
+    available: false  // Planned features
+  }
+]
+```
+
+#### Subscription Management Features:
+- **Plan Information Display**: Current plan, pricing, features included
+- **Status Monitoring**: Visual badges for active/canceled/past_due states
+- **Stripe Portal Integration**: Secure redirect to Stripe customer portal
+- **Plan Switching**: Direct links to plan selection/upgrade flows
+- **Billing Information**: Next charge date, billing history access
+- **Feature Lists**: Dynamic feature comparison based on plan type
 
 #### Sidebar Navigation Structure
 - **Layout**: `/src/app/(dashboard)/layout.tsx` wraps content with `SidebarProvider`
@@ -189,6 +293,7 @@ The dashboard uses shadcn/ui sidebar pattern with route groups:
   - `/dashboard/clientes` - Patient management
   - `/dashboard/relatorios` - Analytics and reports
   - `/dashboard/configuracoes` - System settings
+  - `/dashboard/assinatura/renovar` - Subscription renewal (middleware-protected)
 
 #### Sidebar Implementation Pattern
 - Uses `SidebarProvider` for state management
@@ -231,6 +336,14 @@ export class ProfessionalService {
 export class AvailabilityService {
   static async getByProfessionalId(professionalId: string, supabase: SupabaseClient): Promise<Availability[]>
   static async create(data: CreateAvailabilityInput, supabase: SupabaseClient): Promise<Availability>
+  // ... other operations
+}
+
+export class ConsultationTypeService {
+  static async create(data: CreateConsultationTypeInput, supabase: SupabaseClient): Promise<ConsultationType>
+  static async list(filters: ConsultationTypeFilters, pagination: PaginationParams, supabase: SupabaseClient): Promise<ConsultationType[]>
+  static async getByProfessional(professionalId: string, supabase: SupabaseClient): Promise<ConsultationTypeWithCustomizations[]>
+  static async addToProfessional(data: ProfessionalConsultationTypeInput, supabase: SupabaseClient): Promise<ProfessionalConsultationType>
   // ... other operations
 }
 ```
@@ -277,6 +390,37 @@ export default async function Page() {
 ### 1. NEXT_REDIRECT Errors
 **Problem**: `redirect()` calls inside try/catch blocks cause console errors.
 **Solution**: Always call `redirect()` outside try/catch blocks as shown in the server action pattern above.
+
+### 0. Subscription Access Control (NEW)
+**Problem**: Users with expired subscriptions can still access the dashboard.
+**Solution**: The middleware now includes comprehensive subscription checking:
+
+```typescript
+// Enhanced middleware pattern
+if (onboardingStatus === 'completed') {
+  // Allow renewal page access without subscription check
+  if (!pathname.startsWith('/dashboard/assinatura/renovar')) {
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('status, plan_type')
+      .eq('user_id', user.id)
+      .single()
+    
+    // Block inactive subscriptions
+    if (!subscription || !['active', 'trialing'].includes(subscription.status)) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard/assinatura/renovar'
+      return NextResponse.redirect(url)
+    }
+  }
+}
+```
+
+**Critical Points**:
+- Always allow access to the renewal page itself (avoid redirect loops)
+- Check subscription status AFTER onboarding completion
+- Handle missing subscriptions (user never subscribed)  
+- Include both 'active' and 'trialing' as valid statuses
 
 ### 2. Authentication Failures in Services  
 **Problem**: Service methods fail with "User not authenticated" when called from server components.
@@ -359,11 +503,59 @@ The appointments module is **fully implemented** with complete scheduling system
 
 ### 10. Patient Module Status
 The patient module is **fully implemented** with complete CRUD operations:
-- ✅ **Listing**: `/dashboard/clientes` shows all patients
+- ✅ **Listing**: `/dashboard/clientes` shows all patients with table view
 - ✅ **Creation**: `/dashboard/clientes/novo` with full form validation
 - ✅ **Viewing**: `/dashboard/clientes/[id]` displays patient details
 - ✅ **Editing**: `/dashboard/clientes/[id]/editar` updates patient data
 - ✅ **Brazilian Validation**: CPF, phone, CEP with proper masks and validation
+- ✅ **Status Management**: Complete active/inactive/archived status system
+- ✅ **Advanced Filtering**: Filter by search, media origin, and status
+- ✅ **Table Actions**: View, edit, and delete buttons per patient
+
+### 10.1. Patient Status Management System (NEW)
+The patient module includes a comprehensive status management system for tracking patient lifecycle:
+
+**Status Options**:
+- **`active`**: Regular patients with ongoing treatment
+- **`inactive`**: Patients temporarily not receiving treatment
+- **`archived`**: Patients no longer associated with the clinic
+
+**Database Integration**:
+```sql
+-- Required migration for existing installations
+ALTER TABLE patients ADD COLUMN status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'archived'));
+UPDATE patients SET status = 'active' WHERE status IS NULL;
+```
+
+**Form Integration**:
+```typescript
+// Status field in patient forms (PatientForm component)
+<Select onValueChange={field.onChange} defaultValue={field.value || 'active'}>
+  <SelectItem value="active">Ativo</SelectItem>
+  <SelectItem value="inactive">Inativo</SelectItem>
+  <SelectItem value="archived">Arquivado</SelectItem>
+</Select>
+```
+
+**Filtering and Search Behavior**:
+- **Patient List**: Filter dropdown allows selection by status
+- **Chat Search**: Shows `active` and `inactive` patients, excludes `archived`
+- **Pipeline**: Only shows non-archived patients (`status != 'archived'`)
+- **Reports**: Status-based analytics and patient counts
+
+**Service Layer Pattern**:
+```typescript
+// Filter patients by status in search
+PatientService.search({ status: ['active', 'inactive'] }, pagination, supabase)
+
+// Soft delete by archiving instead of hard delete
+PatientService.update(id, { status: 'archived' }, supabase)
+```
+
+**Visual Indicators**:
+- **Active**: No badge (default state)
+- **Inactive**: Yellow outline badge "Inativo"
+- **Archived**: Gray secondary badge "Arquivado"
 
 ### 11. Supabase Error Handling Pattern
 **PGRST116 (No Rows Found)**: This is a normal response from Supabase when using `.single()` and no data exists. Don't log as error:
@@ -469,6 +661,53 @@ const patients = await PatientService.search({}, { per_page: 100 }, supabase)
 - Complex filtering logic
 - Large datasets requiring pagination
 
+### 15.1. Auto-filtering List Pattern (NEW)
+For search interfaces where users need to see results as they type, use the auto-filtering list pattern instead of Select dropdowns:
+
+**Problem**: Select dropdowns hide filtered results until clicked, creating poor UX for search.
+**Solution**: Replace Select with visible, auto-filtering list of clickable cards.
+
+**Implementation Pattern**:
+```typescript
+// Input field filters results in real-time
+<Input
+  placeholder="Buscar por nome, telefone ou CPF..."
+  value={searchQuery}
+  onChange={(e) => setSearchQuery(e.target.value)}
+/>
+
+// Results appear instantly as scrollable list
+<div className="border rounded-lg max-h-60 overflow-y-auto">
+  <div className="divide-y">
+    {filteredItems.map((item) => (
+      <div
+        key={item.id}
+        onClick={() => setSelectedId(item.id)}
+        className={`p-3 cursor-pointer hover:bg-muted/50 transition-colors ${
+          selectedId === item.id
+            ? 'bg-primary/10 border-l-4 border-l-primary'
+            : ''
+        }`}
+      >
+        <div className="font-medium">{item.name}</div>
+        <div className="text-sm text-muted-foreground">{item.details}</div>
+      </div>
+    ))}
+  </div>
+</div>
+```
+
+**When to Use Auto-filtering Lists**:
+- Search interfaces requiring immediate feedback
+- Patient/professional selection in chat systems
+- Any scenario where users need to "browse while typing"
+- Lists with 10-100 items that benefit from quick filtering
+
+**When to Use Select Dropdowns**:
+- Form fields with predefined, small option sets
+- Configuration dropdowns (status, categories, etc.)
+- Cases where selection is more important than search
+
 ### 16. Appointment System Architecture
 The appointment system uses two main tables for availability:
 - **`professional_schedules`**: Weekly template for working hours (primary source)
@@ -534,6 +773,43 @@ const patients = await PatientService.search({}, { per_page: 100 }, supabase)
 - useCallback/useMemo dependencies with Supabase clients need careful handling
 - Simple Select is faster, more reliable, and provides better UX for most use cases
 
+### 18.1. Search Interface UX Patterns (NEW)
+**Critical Discovery**: Select dropdowns provide poor UX for search-heavy interfaces.
+
+**Problem Pattern**:
+```tsx
+// ❌ Poor UX - results hidden until user clicks dropdown
+<Select>
+  <SelectTrigger>
+    <SelectValue placeholder="Search patients..." />
+  </SelectTrigger>
+  <SelectContent>
+    {filteredPatients.map(...)} // Hidden until clicked!
+  </SelectContent>  
+</Select>
+```
+
+**Solution Pattern**:
+```tsx
+// ✅ Better UX - results visible immediately as you type
+<Input 
+  placeholder="Search patients..."
+  onChange={(e) => setQuery(e.target.value)} 
+/>
+<div className="visible-results-list">
+  {filteredItems.map(item => (
+    <div onClick={() => selectItem(item)}>
+      {/* Immediately visible results */}
+    </div>
+  ))}
+</div>
+```
+
+**When to Use Each Pattern**:
+- **Select Dropdown**: Small, predefined lists (statuses, categories)  
+- **Auto-filtering List**: Search interfaces, patient/professional selection
+- **Complex Search**: Large datasets requiring server-side pagination
+
 ### 19. Pipeline Sales Funnel System
 The pipeline system implements a Kanban-style sales funnel to track patient journey from leads to active patients.
 
@@ -597,6 +873,7 @@ The chat system integrates with Evolution API to provide real-time WhatsApp mess
 ```sql
 whatsapp_connections    # WhatsApp instance configuration per clinic
 conversations          # Chat threads between clinic and patients
+                       # - ai_assistant_enabled: Toggle for AI responses per conversation
 messages               # Individual messages with media support
 whatsapp_contacts      # Contacts not yet registered as patients
 chat_stats            # Aggregated statistics view
@@ -627,6 +904,9 @@ await EvolutionService.sendTextMessage(instanceName, {
   number: phone,
   message: content
 })
+
+// AI Assistant toggle per conversation
+await ChatService.updateAssistantStatus(conversationId, enabled, supabase)
 
 // Real-time message subscription
 const { messages } = useRealtimeMessages({
@@ -682,12 +962,20 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000  # For webhook URL
 - **Typing Indicators**: Real-time presence information
 - **Connection Status**: Live WhatsApp connection monitoring
 - **Unread Counters**: Dynamic unread message badges
+- **AI Assistant Toggle**: Real-time toggle per conversation with visual indicators
+- **Assistant Status**: Bot icon indicators in conversation list and chat header
 
 **Patient Integration**:
 - **Auto-linking**: Automatically links messages to existing patients by phone
 - **Contact Creation**: Creates WhatsApp contacts for unknown numbers
 - **Patient Search**: Link conversations to existing patients manually
 - **Conversation History**: Maintains full message history per patient
+
+**AI Assistant Integration**:
+- **New Lead Behavior**: All new conversations created with `ai_assistant_enabled = true` by default
+- **Individual Control**: Toggle AI responses per conversation via chat interface
+- **Visual Indicators**: Bot icon in conversation list and toggle in chat header
+- **Migration**: Existing conversations upgraded with AI assistant enabled
 
 **Security & Multi-tenancy**:
 - **Row Level Security**: All chat tables use RLS for clinic isolation
@@ -955,13 +1243,20 @@ new → contacted → qualified → appointment → converted → lost
 
 Each status change triggers automatic conversion event creation for analytics and reporting.
 
-### 24. New Conversation Creation with Patients
-The chat system includes functionality to start new conversations with registered patients.
+### 24. New Conversation Creation with Patients (UPDATED)
+The chat system includes functionality to start new conversations with registered patients, featuring an improved UX with auto-filtering patient search.
 
 **Component**: `NewConversationDialog` allows searching and selecting patients by:
-- **Name**: Full text search
+- **Name**: Full text search with instant results
 - **Phone**: Exact match search  
 - **CPF**: Brazilian document search
+
+**Improved UX Features (Recent Update)**:
+- **Auto-filtering List**: Replaced Select dropdown with instantly visible filtered list
+- **Real-time Search**: Results appear immediately as you type, no need to click dropdown
+- **Visual Selection**: Selected patient highlighted with primary color border
+- **Status Indicators**: Shows patient status badges (Inativo/Arquivado)
+- **Patient Count**: Displays filtered count "Pacientes (X)" in header
 
 **Integration Pattern**:
 ```typescript
@@ -971,9 +1266,11 @@ The chat system includes functionality to start new conversations with registere
   Nova Conversa
 </Button>
 
-// Dialog handles patient selection and conversation creation
+// Dialog with improved search UX
 <NewConversationDialog
   open={newConversationOpen}
+  onOpenChange={setNewConversationOpen}
+  clinicId={clinic.id}
   onConversationCreated={(conversation) => {
     setConversations(prev => [conversation, ...prev])
     setSelectedConversation(conversation)
@@ -981,8 +1278,28 @@ The chat system includes functionality to start new conversations with registere
 />
 ```
 
+**Search Implementation**:
+```typescript
+// Auto-filtering pattern (replaces Select dropdown)
+<Input
+  placeholder="Buscar por nome, telefone ou CPF..."
+  value={searchQuery}
+  onChange={(e) => setSearchQuery(e.target.value)}
+/>
+
+// Instantly visible results
+<div className="border rounded-lg max-h-60 overflow-y-auto">
+  {filteredPatients.map((patient) => (
+    <div onClick={() => setSelectedPatientId(patient.id)}>
+      {/* Patient card with name, phone, status */}
+    </div>
+  ))}
+</div>
+```
+
 **Backend Logic**:
-- Searches `patients` table filtered by clinic
+- Uses `PatientService.search()` with status filter: `['active', 'inactive']`
+- Excludes archived patients from search results
 - Creates new conversation or reuses existing one for same phone
 - Automatically links to patient record
 - Returns `ConversationWithPatient` object for immediate UI update
@@ -991,3 +1308,80 @@ The chat system includes functionality to start new conversations with registere
 - Component: `/src/features/chat/components/new-conversation-dialog.tsx`
 - Integration: `/src/app/(dashboard)/dashboard/chat/client.tsx`
 - Service: Uses `ChatService.findOrCreateConversation()`
+
+**Performance Notes**:
+- Loads up to 100 patients on dialog open (reasonable for most clinics)
+- Client-side filtering for instant search feedback
+- useEffect hook ensures patients load when dialog opens (fixed from previous version)
+
+### 25. Consultation Types Module (NEW)
+The system includes a comprehensive consultation types management module that allows clinics to create custom appointment types with specific configurations.
+
+**Database Schema** (`database-migration-consultation-types.sql`):
+```sql
+consultation_types              # Custom types: name, duration, price, color, preparation requirements
+professional_consultation_types # Links professionals to types with custom pricing/duration overrides
+```
+
+**Key Features**:
+- **Custom Types**: Create unlimited consultation types (Consulta, Retorno, Exame, Procedimento, etc.)
+- **Visual Organization**: Color coding for calendar display and quick identification
+- **Pricing Configuration**: Set default prices per consultation type  
+- **Duration Management**: Custom duration per type (15min to 8 hours)
+- **Professional Assignment**: Link specific types to professionals with custom overrides
+- **Preparation Requirements**: Optional patient preparation instructions
+- **Default Selection**: Mark one type as default for quick appointment creation
+- **Auto-Creation**: 5 default types created automatically for new clinics
+
+**Component Architecture**:
+```typescript
+/features/appointments/types/consultation-types.ts    # TypeScript interfaces and schemas
+/features/appointments/services/consultation-type.service.ts  # Service layer with CRUD operations
+/app/(dashboard)/dashboard/configuracoes/consultas/  # Management interface components
+```
+
+**Service Pattern**:
+```typescript
+// Core CRUD operations
+ConsultationTypeService.create(data, supabase)
+ConsultationTypeService.list(filters, pagination, supabase)
+ConsultationTypeService.update(id, updates, supabase)
+
+// Professional assignment
+ConsultationTypeService.addToProfessional(professionalId, typeId, supabase)
+ConsultationTypeService.getByProfessional(professionalId, supabase)
+
+// Utility methods
+ConsultationTypeService.getDefault(supabase)
+ConsultationTypeService.setAsDefault(id, supabase)
+```
+
+**Integration with Appointments**:
+- **Schema Update**: `appointments.consultation_type_id` references consultation types
+- **Dynamic Duration**: DateTimePicker automatically uses consultation type duration
+- **Visual Feedback**: Appointment form shows type details, pricing, and preparation requirements
+- **Professional Filtering**: Only shows consultation types assigned to selected professional
+- **Legacy Support**: Maintains backward compatibility with old `type` enum field
+
+**Management Interface Features** (`/dashboard/configuracoes/consultas`):
+- **Type Cards**: Visual cards showing color, name, duration, price, and status
+- **CRUD Operations**: Create, edit, activate/deactivate, and delete types
+- **Professional Assignment Dialog**: Visual interface to link types to professionals
+- **Custom Overrides**: Set professional-specific pricing and duration
+- **Statistics Display**: Shows total types, active types, and professional count
+- **Preparation Instructions**: Rich text editor for patient preparation guidelines
+
+**Default Types Created**:
+1. **Consulta** (Blue, 30min) - Default selection
+2. **Retorno** (Green, 30min) - Follow-up appointments
+3. **Exame** (Yellow, 45min) - Diagnostic procedures  
+4. **Procedimento** (Red, 60min) - Medical procedures
+5. **Primeira Consulta** (Purple, 60min) - Initial consultations with full anamnesis
+
+**Key Implementation Notes**:
+- All consultation types use RLS policies for multi-tenant security
+- Color validation ensures proper hex format (#RRGGBB)
+- Professional customization allows per-doctor pricing and duration overrides
+- Appointment booking automatically adjusts time slots based on selected consultation type
+- Preparation requirements display prominently during appointment creation
+- Statistics and usage tracking for administrative insights

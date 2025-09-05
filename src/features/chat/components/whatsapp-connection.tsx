@@ -3,7 +3,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -42,6 +42,8 @@ export function WhatsAppConnectionComponent({
   const [error, setError] = useState<string | null>(null)
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null)
   const [pairingCode, setPairingCode] = useState<string | null>(null)
+  const [instanceNotFound, setInstanceNotFound] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
 
   // Update QR code when connection changes
   useEffect(() => {
@@ -71,9 +73,23 @@ export function WhatsAppConnectionComponent({
 
     setLoading(true)
     setError(null)
+    setInstanceNotFound(false)
 
     try {
-      // Get QR code from Evolution API
+      // Step 1: Verify instance exists before attempting connection
+      console.log('🔍 Checking if instance exists before connecting...')
+      const existsCheck = await EvolutionService.checkInstanceExists(connection.instance_name)
+      
+      if (!existsCheck.exists) {
+        console.error('❌ Instance not found:', existsCheck.error)
+        setInstanceNotFound(true)
+        setError('Instância não encontrada na Evolution API. É necessário recriar a conexão.')
+        return
+      }
+      
+      console.log('✅ Instance exists, proceeding with connection...')
+      
+      // Step 2: Get QR code from Evolution API
       const result = await EvolutionService.connectInstance(connection.instance_name)
       
       if (result.base64 && result.count && result.count > 0) {
@@ -113,10 +129,10 @@ export function WhatsAppConnectionComponent({
       console.error('Error connecting to WhatsApp:', err)
       
       // Check if it's a 404 error (instance doesn't exist)
-      if (err && typeof err === 'object' && 'status' in err && err.status === 404) {
-        setError('Instância não encontrada. A conexão precisa ser recriada.')
-      } else if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message.includes('404')) {
-        setError('Instância não encontrada. A conexão precisa ser recriada.')
+      if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && 
+          (err.message.includes('404') || err.message.includes('not found'))) {
+        setInstanceNotFound(true)
+        setError('Instância não encontrada na Evolution API. É necessário recriar a conexão.')
       } else {
         setError('Erro ao conectar com WhatsApp. Tente novamente.')
       }
@@ -157,17 +173,141 @@ export function WhatsAppConnectionComponent({
 
     setLoading(true)
     setError(null)
+    setInstanceNotFound(false)
 
     try {
-      await EvolutionService.restartInstance(connection.instance_name)
+      // Step 1: Check if instance exists before restarting
+      console.log('🔍 Checking if instance exists before restarting...')
+      const existsCheck = await EvolutionService.checkInstanceExists(connection.instance_name)
       
-      // Wait a bit then get new QR code
+      if (!existsCheck.exists) {
+        console.error('❌ Instance not found for restart:', existsCheck.error)
+        setInstanceNotFound(true)
+        setError('Instância não encontrada na Evolution API. É necessário recriar a conexão.')
+        setLoading(false)
+        return
+      }
+      
+      console.log('✅ Instance exists, proceeding with restart...')
+      
+      // Step 2: Restart the instance
+      await EvolutionService.restartInstance(connection.instance_name)
+      console.log('🔄 Instance restarted successfully')
+      
+      // Step 3: Wait a bit then get new QR code
       setTimeout(() => {
         handleConnect()
       }, 2000)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error restarting instance:', err)
-      setError('Erro ao reiniciar instância. Tente novamente.')
+      
+      // Check if it's a 404 error (instance doesn't exist)
+      if (err.message && (err.message.includes('404') || err.message.includes('not found'))) {
+        setInstanceNotFound(true)
+        setError('Instância não encontrada na Evolution API. É necessário recriar a conexão.')
+      } else {
+        setError('Erro ao reiniciar instância. Tente novamente.')
+      }
+      setLoading(false)
+    }
+  }
+
+  const handleSmartReconnect = async () => {
+    if (!connection) return
+
+    setReconnecting(true)
+    setError(null)
+    setInstanceNotFound(false)
+
+    try {
+      console.log('🔄 Starting smart reconnection...')
+      
+      const result = await EvolutionService.reconnectInstance(connection.instance_name)
+      
+      if (result.success && result.qrResult) {
+        console.log('✅ Smart reconnection successful')
+        
+        // Update UI with new QR code
+        if (result.qrResult.base64) {
+          setQrCodeUrl(result.qrResult.base64)
+        }
+        
+        if (result.qrResult.pairingCode) {
+          setPairingCode(result.qrResult.pairingCode)
+        }
+        
+        // Update connection status
+        onConnectionUpdate({
+          ...connection,
+          status: 'qr_code',
+          qr_code: result.qrResult.base64 || null
+        })
+        
+        setError(null)
+      } else {
+        console.error('❌ Smart reconnection failed:', result.error)
+        
+        if (result.error?.includes('not found')) {
+          setInstanceNotFound(true)
+          setError('Instância não encontrada. É necessário recriar a conexão.')
+        } else {
+          setError(`Erro na reconexão: ${result.error}`)
+        }
+      }
+    } catch (err: any) {
+      console.error('Smart reconnect error:', err)
+      setError('Erro na reconexão inteligente. Tente novamente.')
+    } finally {
+      setReconnecting(false)
+    }
+  }
+
+  const handleRecreateConnection = async () => {
+    if (!connection) return
+
+    setLoading(true)
+    setError(null)
+    setInstanceNotFound(false)
+
+    try {
+      console.log('🆕 Starting connection recreation...')
+      
+      const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/evolution`
+      
+      const result = await EvolutionService.recreateInstance(
+        connection.instance_name,
+        webhookUrl
+      )
+      
+      if (result.success && result.qrResult) {
+        console.log('✅ Connection recreated successfully')
+        
+        // Update UI with new QR code
+        if (result.qrResult.base64) {
+          setQrCodeUrl(result.qrResult.base64)
+        }
+        
+        if (result.qrResult.pairingCode) {
+          setPairingCode(result.qrResult.pairingCode)
+        }
+        
+        // Update connection status
+        onConnectionUpdate({
+          ...connection,
+          status: 'qr_code',
+          qr_code: result.qrResult.base64 || null
+        })
+        
+        setError(null)
+        setInstanceNotFound(false)
+      } else {
+        console.error('❌ Connection recreation failed:', result.error)
+        setError(`Erro ao recriar conexão: ${result.error}`)
+      }
+    } catch (err: any) {
+      console.error('Recreate connection error:', err)
+      setError('Erro ao recriar conexão. Tente novamente.')
+    } finally {
       setLoading(false)
     }
   }
@@ -192,6 +332,8 @@ export function WhatsAppConnectionComponent({
       setLoading(false)
     }
   }
+
+
 
   const getStatusBadge = () => {
     if (!connection) return null
@@ -384,76 +526,127 @@ export function WhatsAppConnectionComponent({
             )}
 
             {/* Action buttons */}
-            <div className="flex gap-2">
-              {connection.status === 'disconnected' && (
-                <Button 
-                  onClick={handleConnect} 
-                  disabled={loading}
-                  className="flex-1"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <QrCode className="h-4 w-4 mr-2" />
-                  )}
-                  Conectar WhatsApp
-                </Button>
+            <div className="space-y-3">
+              {/* Instance not found warning */}
+              {instanceNotFound && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>Instância não encontrada!</strong>
+                    <br />A instância foi deletada na Evolution API. É necessário recriar a conexão.
+                  </AlertDescription>
+                </Alert>
               )}
 
-              {connection.status === 'qr_code' && (
-                <Button 
-                  variant="outline"
-                  onClick={handleConnect} 
-                  disabled={loading}
-                  className="flex-1"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                  )}
-                  Atualizar QR Code
-                </Button>
-              )}
-
-              {connection.status === 'connected' && (
-                <Button 
-                  variant="outline"
-                  onClick={handleDisconnect} 
-                  disabled={loading}
-                  className="flex-1"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4 mr-2" />
-                  )}
-                  Desconectar
-                </Button>
-              )}
-
-              <Button 
-                variant="outline"
-                onClick={handleRestart} 
-                disabled={loading}
-                size="icon"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
+              {/* Main action buttons */}
+              <div className="flex gap-2">
+                {connection.status === 'disconnected' && !instanceNotFound && (
+                  <Button 
+                    onClick={handleConnect} 
+                    disabled={loading || reconnecting}
+                    className="flex-1"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <QrCode className="h-4 w-4 mr-2" />
+                    )}
+                    Conectar WhatsApp
+                  </Button>
                 )}
-              </Button>
 
-              <Button 
-                variant="outline"
-                onClick={handleDelete} 
-                disabled={loading}
-                size="icon"
-                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+                {connection.status === 'qr_code' && !instanceNotFound && (
+                  <Button 
+                    variant="outline"
+                    onClick={handleConnect} 
+                    disabled={loading || reconnecting}
+                    className="flex-1"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                    )}
+                    Atualizar QR Code
+                  </Button>
+                )}
+
+                {connection.status === 'connected' && !instanceNotFound && (
+                  <Button 
+                    variant="outline"
+                    onClick={handleDisconnect} 
+                    disabled={loading || reconnecting}
+                    className="flex-1"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 mr-2" />
+                    )}
+                    Desconectar
+                  </Button>
+                )}
+
+                {/* Recreate connection button when instance not found */}
+                {instanceNotFound && (
+                  <Button 
+                    onClick={handleRecreateConnection}
+                    disabled={loading || reconnecting}
+                    className="flex-1 bg-orange-600 hover:bg-orange-700"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                    )}
+                    Recriar Conexão
+                  </Button>
+                )}
+
+                {/* Smart reconnect button (only when connected but having issues) */}
+                {connection.status === 'connected' && !instanceNotFound && (
+                  <Button 
+                    variant="outline"
+                    onClick={handleSmartReconnect}
+                    disabled={loading || reconnecting}
+                    size="sm"
+                    className="bg-blue-50 hover:bg-blue-100"
+                  >
+                    {reconnecting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                    )}
+                    Reconectar
+                  </Button>
+                )}
+
+                {!instanceNotFound && (
+                  <Button 
+                    variant="outline"
+                    onClick={handleRestart} 
+                    disabled={loading || reconnecting}
+                    size="icon"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                )}
+
+
+                <Button 
+                  variant="outline"
+                  onClick={handleDelete} 
+                  disabled={loading || reconnecting}
+                  size="icon"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
 
             {/* Instructions */}

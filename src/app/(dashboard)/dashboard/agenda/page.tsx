@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { AppointmentService } from '@/features/appointments/services/appointment.service'
 import { ProfessionalService } from '@/features/appointments/services/professional.service'
 import { PatientService } from '@/features/patients/services/patient.service'
+import { ConsultationTypeService } from '@/features/appointments/services/consultation-type.service'
 import { AgendaPageClient } from './agenda-client'
 
 export default async function AgendaPage() {
@@ -18,14 +19,15 @@ export default async function AgendaPage() {
 
   try {
     // Fetch initial data in parallel
-    const [appointmentsResult, professionalsResult, patientsResult] = await Promise.all([
+    const [appointmentsResult, professionalsResult, patientsResult, consultationTypes] = await Promise.all([
       AppointmentService.search(
         {}, // No filters - get all appointments
         { per_page: 100, sort_by: 'date', sort_order: 'asc' },
         supabase
       ),
       ProfessionalService.list({}, { per_page: 50 }, supabase),
-      PatientService.search({}, { per_page: 100, sort_by: 'name', sort_order: 'asc' }, supabase)
+      PatientService.search({}, { per_page: 100, sort_by: 'name', sort_order: 'asc' }, supabase),
+      ConsultationTypeService.list({}, { per_page: 100 }, supabase)
     ])
 
     console.log('AgendaPage - professionalsResult:', professionalsResult)
@@ -37,6 +39,7 @@ export default async function AgendaPage() {
         initialAppointments={appointmentsResult.data}
         professionals={professionalsResult}
         patients={patientsResult.data}
+        consultationTypes={consultationTypes}
       />
     )
   } catch (error) {
@@ -48,6 +51,7 @@ export default async function AgendaPage() {
         initialAppointments={[]}
         professionals={[]}
         patients={[]}
+        consultationTypes={[]}
       />
     )
   }

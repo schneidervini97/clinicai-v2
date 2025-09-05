@@ -23,6 +23,7 @@ export interface Conversation {
   last_message_preview?: string
   unread_count: number
   status: 'active' | 'archived'
+  ai_assistant_enabled: boolean
   created_at: string
   updated_at: string
   patient?: {

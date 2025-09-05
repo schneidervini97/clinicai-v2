@@ -58,14 +58,14 @@ export const professionalScheduleSchema = z.object({
 export const appointmentSchema = z.object({
   patient_id: z.string().uuid('Paciente é obrigatório'),
   professional_id: z.string().uuid('Profissional é obrigatório'),
+  consultation_type_id: z.string().uuid('Tipo de consulta é obrigatório'),
   date: z.date({
     required_error: 'Data é obrigatória',
     invalid_type_error: 'Data inválida'
   }),
   start_time: z.string().regex(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Horário inválido'),
-  type: z.enum(['consultation', 'return', 'exam', 'procedure'], {
-    required_error: 'Tipo de consulta é obrigatório'
-  }),
+  // Legacy type field for backward compatibility
+  type: z.enum(['consultation', 'return', 'exam', 'procedure']).optional(),
   notes: z.string().optional(),
   internal_notes: z.string().optional(),
 }).refine((data) => {

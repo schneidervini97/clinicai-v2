@@ -17,7 +17,8 @@ import {
   Archive,
   MoreVertical,
   Trash2,
-  Plus
+  Plus,
+  Bot
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -329,6 +330,11 @@ function ConversationItem({
           <p className="text-sm text-muted-foreground truncate flex-1">
             {conversation.last_message_preview || 'Nova conversa'}
           </p>
+          {conversation.ai_assistant_enabled && (
+            <div className="flex-shrink-0">
+              <Bot className="h-3 w-3 text-primary" />
+            </div>
+          )}
         </div>
 
         <div className="text-xs text-muted-foreground mt-1">

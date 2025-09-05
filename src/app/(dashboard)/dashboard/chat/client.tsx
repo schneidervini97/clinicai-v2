@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -192,6 +193,54 @@ export function ChatPageClient({
       throw err
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleToggleAssistant = async (conversationId: string, enabled: boolean): Promise<void> => {
+    try {
+      // Optimistic update
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === conversationId 
+            ? { ...conv, ai_assistant_enabled: enabled }
+            : conv
+        )
+      )
+
+      // Update selected conversation if it's the one being changed
+      if (selectedConversation?.id === conversationId) {
+        setSelectedConversation(prev => 
+          prev ? { ...prev, ai_assistant_enabled: enabled } : null
+        )
+      }
+
+      // Update in database
+      await ChatService.updateAssistantStatus(conversationId, enabled, supabase)
+      
+      toast.success(
+        enabled 
+          ? 'Assistente AI ativado para esta conversa'
+          : 'Assistente AI desativado para esta conversa'
+      )
+      
+    } catch (error) {
+      console.error('Error toggling AI assistant:', error)
+      toast.error('Erro ao atualizar assistente AI')
+      
+      // Revert optimistic update on error
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === conversationId 
+            ? { ...conv, ai_assistant_enabled: !enabled }
+            : conv
+        )
+      )
+
+      if (selectedConversation?.id === conversationId) {
+        setSelectedConversation(prev => 
+          prev ? { ...prev, ai_assistant_enabled: !enabled } : null
+        )
+      }
     }
   }
 
@@ -461,6 +510,7 @@ export function ChatPageClient({
               onMarkAsRead={handleMarkAsRead}
               onArchiveConversation={handleArchiveConversation}
               onLinkPatient={handleLinkPatient}
+              onToggleAssistant={handleToggleAssistant}
               loading={messagesLoading || sending}
             />
           </div>

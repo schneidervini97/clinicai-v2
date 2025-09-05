@@ -114,6 +114,7 @@ export const patientSchema = z.object({
   // Personal data
   birth_date: birthDateSchema,
   gender: z.enum(['male', 'female', 'other']).optional(),
+  status: z.enum(['active', 'inactive', 'archived']).default('active').optional(),
   rg: z
     .string()
     .optional()

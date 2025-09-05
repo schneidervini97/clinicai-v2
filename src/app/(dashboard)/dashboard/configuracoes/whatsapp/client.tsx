@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Settings,
   Users,
-  BarChart3
+  BarChart3,
+  RefreshCw
 } from 'lucide-react'
 import { WhatsAppConnectionComponent } from '@/features/chat/components/whatsapp-connection'
 import { useWhatsAppConnection } from '@/features/chat/hooks/useWhatsAppConnection'
@@ -38,6 +39,7 @@ export function WhatsAppConfigurationClient({
 }: WhatsAppConfigurationClientProps) {
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   
   const {
     connection,
@@ -135,6 +137,22 @@ export function WhatsAppConfigurationClient({
     }
   }
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    setError(null)
+    
+    try {
+      console.log('🔄 Refreshing connection data manually...')
+      await refetch()
+      console.log('✅ Connection data refreshed')
+    } catch (err) {
+      console.error('Error refreshing connection:', err)
+      setError('Erro ao atualizar dados da conexão.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Status Cards */}
@@ -142,7 +160,18 @@ export function WhatsAppConfigurationClient({
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Status WhatsApp</CardTitle>
-            <Smartphone className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={refreshing || loading}
+                className="h-6 w-6 p-0"
+              >
+                <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              </Button>
+              <Smartphone className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">

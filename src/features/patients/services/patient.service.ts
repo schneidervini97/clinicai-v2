@@ -50,6 +50,7 @@ export class PatientService {
         ...cleanData,
         clinic_id,
         created_by: user?.id,
+        status: patientData.status || 'active', // Garantir status padrão
         // Ensure arrays are properly formatted
         allergies: patientData.allergies || [],
         current_medications: patientData.current_medications || [],
@@ -89,12 +90,65 @@ export class PatientService {
     const client = supabase
     const clinic_id = await this.getCurrentClinicId(client)
 
+    // Get current patient data to check if CPF/email is changing
+    const currentPatient = await this.findById(id, supabase)
+    if (!currentPatient) {
+      throw new Error('Patient not found')
+    }
+
+    // Create update object
+    const updateData = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    }
+
+    // Handle CPF uniqueness - only update if it's actually changing
+    if (!updates.cpf || updates.cpf.trim() === '') {
+      // CPF is empty/null, allow it (set to null in database)
+      updateData.cpf = null
+    } else if (updates.cpf === currentPatient.cpf) {
+      // CPF hasn't changed, remove from update to avoid unique constraint error
+      delete updateData.cpf
+    } else {
+      // CPF is changing to a new value, check if new CPF already exists
+      const { data: existingPatient } = await client
+        .from('patients')
+        .select('id')
+        .eq('clinic_id', clinic_id)
+        .eq('cpf', updates.cpf)
+        .neq('id', id) // Exclude current patient
+        .single()
+
+      if (existingPatient) {
+        throw new Error('Já existe um paciente com este CPF')
+      }
+    }
+
+    // Handle email uniqueness - only update if it's actually changing
+    if (!updates.email || updates.email.trim() === '') {
+      // Email is empty/null, allow it (set to null in database)
+      updateData.email = null
+    } else if (updates.email === currentPatient.email) {
+      // Email hasn't changed, remove from update to avoid unique constraint error
+      delete updateData.email
+    } else {
+      // Email is changing to a new value, check if new email already exists
+      const { data: existingPatient } = await client
+        .from('patients')
+        .select('id')
+        .eq('clinic_id', clinic_id)
+        .eq('email', updates.email)
+        .neq('id', id) // Exclude current patient
+        .single()
+
+      if (existingPatient) {
+        throw new Error('Já existe um paciente com este email')
+      }
+    }
+
     const { data, error } = await client
       .from('patients')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq('id', id)
       .eq('clinic_id', clinic_id)
       .select()
@@ -102,6 +156,16 @@ export class PatientService {
 
     if (error) {
       console.error('Error updating patient:', error)
+      
+      // Handle specific constraint errors with user-friendly messages
+      if (error.code === '23505') {
+        if (error.message.includes('cpf')) {
+          throw new Error('Já existe um paciente com este CPF')
+        } else if (error.message.includes('email')) {
+          throw new Error('Já existe um paciente com este email')
+        }
+      }
+      
       throw new Error(error.message)
     }
 

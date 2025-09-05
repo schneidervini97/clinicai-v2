@@ -3,7 +3,7 @@
 
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Dialog,
@@ -12,13 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -51,6 +44,13 @@ export function NewConversationDialog({
   const supabase = useMemo(() => createClient(), [])
 
   // Load patients when dialog opens
+  useEffect(() => {
+    if (open) {
+      loadPatients()
+    }
+  }, [open])
+
+  // Load patients when dialog opens
   const loadPatients = async () => {
     if (!open) return
     
@@ -60,7 +60,7 @@ export function NewConversationDialog({
     try {
       const result = await PatientService.search(
         {
-          status: 'active'
+          status: ['active', 'inactive'] // Include active and inactive, exclude only archived
         },
         {
           page: 1,
@@ -71,7 +71,7 @@ export function NewConversationDialog({
       
       setPatients(result.data)
     } catch (err) {
-      console.error('Error loading patients:', err)
+      console.error('❌ Error loading patients:', err)
       setError('Erro ao carregar pacientes')
     } finally {
       setLoading(false)
@@ -90,14 +90,12 @@ export function NewConversationDialog({
     )
   }, [patients, searchQuery])
 
-  // Handle dialog open
+  // Handle dialog close
   const handleOpenChange = (newOpen: boolean) => {
     onOpenChange(newOpen)
     
-    if (newOpen) {
-      loadPatients()
-    } else {
-      // Reset form
+    if (!newOpen) {
+      // Reset form when closing
       setSearchQuery('')
       setSelectedPatientId('')
       setError(null)
@@ -190,51 +188,72 @@ export function NewConversationDialog({
             />
           </div>
 
-          {/* Patient selection */}
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="ml-2 text-sm text-muted-foreground">
-                Carregando pacientes...
-              </span>
+          {/* Patient list */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium">
+                Pacientes {filteredPatients.length > 0 && `(${filteredPatients.length})`}
+              </label>
+              {loading && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              )}
             </div>
-          ) : filteredPatients.length > 0 ? (
-            <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um paciente" />
-              </SelectTrigger>
-              <SelectContent>
-                {filteredPatients.map((patient) => (
-                  <SelectItem key={patient.id} value={patient.id}>
-                    <div className="flex items-center gap-3">
-                      <User className="h-4 w-4 text-muted-foreground" />
-                      <div>
-                        <div className="font-medium">{patient.name}</div>
-                        <div className="text-xs text-muted-foreground flex items-center gap-2">
-                          <Phone className="h-3 w-3" />
-                          {patient.phone}
-                          {patient.status === 'archived' && (
-                            <Badge variant="secondary" className="text-xs">
-                              Arquivado
-                            </Badge>
-                          )}
+            
+            <div className="border rounded-lg max-h-60 overflow-y-auto">
+              {loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                  <span className="ml-2 text-sm text-muted-foreground">
+                    Carregando pacientes...
+                  </span>
+                </div>
+              ) : filteredPatients.length > 0 ? (
+                <div className="divide-y">
+                  {filteredPatients.map((patient) => (
+                    <div
+                      key={patient.id}
+                      onClick={() => setSelectedPatientId(patient.id)}
+                      className={`p-3 cursor-pointer hover:bg-muted/50 transition-colors ${
+                        selectedPatientId === patient.id
+                          ? 'bg-primary/10 border-l-4 border-l-primary'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <User className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{patient.name}</div>
+                          <div className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Phone className="h-3 w-3" />
+                            {patient.phone}
+                            {patient.status === 'inactive' && (
+                              <Badge variant="outline" className="text-xs">
+                                Inativo
+                              </Badge>
+                            )}
+                            {patient.status === 'archived' && (
+                              <Badge variant="secondary" className="text-xs">
+                                Arquivado
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <div className="text-center py-8">
-              <User className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">
-                {searchQuery.trim() 
-                  ? 'Nenhum paciente encontrado com essa busca' 
-                  : 'Nenhum paciente cadastrado'}
-              </p>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <User className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    {searchQuery.trim() 
+                      ? 'Nenhum paciente encontrado com essa busca' 
+                      : 'Nenhum paciente cadastrado'}
+                  </p>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* Selected patient preview */}
           {selectedPatient && (

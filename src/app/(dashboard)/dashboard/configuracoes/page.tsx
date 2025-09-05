@@ -1,10 +1,18 @@
 import React from 'react'
 import Link from 'next/link'
-import { Settings, Users, Calendar, Clock, MapPin, CreditCard, Bell, Shield, Smartphone } from 'lucide-react'
+import { Settings, Users, Calendar, MapPin, CreditCard, Smartphone, Bot } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 const configSections = [
+  {
+    title: 'Assinatura',
+    description: 'Gerencie seu plano, pagamentos e informações de cobrança',
+    icon: CreditCard,
+    href: '/dashboard/configuracoes/assinatura',
+    color: 'text-purple-600 bg-purple-100',
+    available: true
+  },
   {
     title: 'Profissionais',
     description: 'Gerencie médicos, dentistas e outros profissionais da clínica',
@@ -22,20 +30,12 @@ const configSections = [
     available: true
   },
   {
-    title: 'Horários de Funcionamento',
-    description: 'Configure horários de atendimento e disponibilidade',
-    icon: Clock,
-    href: '/dashboard/configuracoes/horarios',
-    color: 'text-green-600 bg-green-100',
-    available: false
-  },
-  {
     title: 'Tipos de Consulta',
     description: 'Personalize tipos de consulta e durações',
     icon: Calendar,
     href: '/dashboard/configuracoes/consultas',
     color: 'text-purple-600 bg-purple-100',
-    available: false
+    available: true
   },
   {
     title: 'Dados da Clínica',
@@ -43,31 +43,15 @@ const configSections = [
     icon: MapPin,
     href: '/dashboard/configuracoes/clinica',
     color: 'text-orange-600 bg-orange-100',
-    available: false
+    available: true
   },
   {
-    title: 'Pagamentos',
-    description: 'Métodos de pagamento e configurações financeiras',
-    icon: CreditCard,
-    href: '/dashboard/configuracoes/pagamentos',
-    color: 'text-red-600 bg-red-100',
-    available: false
-  },
-  {
-    title: 'Notificações',
-    description: 'Configure lembretes e notificações automáticas',
-    icon: Bell,
-    href: '/dashboard/configuracoes/notificacoes',
-    color: 'text-yellow-600 bg-yellow-100',
-    available: false
-  },
-  {
-    title: 'Segurança',
-    description: 'Permissões de usuários e configurações de segurança',
-    icon: Shield,
-    href: '/dashboard/configuracoes/seguranca',
-    color: 'text-gray-600 bg-gray-100',
-    available: false
+    title: 'Assistente AI',
+    description: 'Configure o assistente inteligente para atendimento automatizado',
+    icon: Bot,
+    href: '/dashboard/configuracoes/assistente-ai',
+    color: 'text-indigo-600 bg-indigo-100',
+    available: true
   }
 ]
 

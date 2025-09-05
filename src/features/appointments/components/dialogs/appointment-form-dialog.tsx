@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { CalendarPlus, Loader2, User, Stethoscope } from 'lucide-react'
+import { CalendarPlus, Loader2, User, Stethoscope, Clock, DollarSign } from 'lucide-react'
 
 import {
   Dialog,
@@ -36,14 +36,16 @@ import { Card, CardContent } from '@/components/ui/card'
 
 import { DateTimePicker } from '../forms/date-time-picker'
 import { appointmentSchema, AppointmentFormData } from '../../types/appointment.schema'
-import { Professional, APPOINTMENT_TYPES } from '../../types/appointment.types'
+import { Professional } from '../../types/appointment.types'
 import { Patient } from '@/features/patients/types/patient.types'
+import { ConsultationType, ConsultationTypeWithCustomizations, formatPrice, formatDuration } from '../../types/consultation-types'
 
 interface AppointmentFormDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   professionals: Professional[]
   patients: Patient[]
+  consultationTypes: ConsultationType[]
   onSubmit: (data: AppointmentFormData) => Promise<void>
   onCreatePatient?: () => void
   defaultValues?: Partial<AppointmentFormData>
@@ -56,6 +58,7 @@ export function AppointmentFormDialog({
   onOpenChange,
   professionals,
   patients,
+  consultationTypes,
   onSubmit,
   onCreatePatient,
   defaultValues,
@@ -67,7 +70,8 @@ export function AppointmentFormDialog({
   const form = useForm<AppointmentFormData>({
     resolver: zodResolver(appointmentSchema),
     defaultValues: {
-      type: 'consultation',
+      type: 'consultation', // Legacy field for backward compatibility
+      consultation_type_id: consultationTypes?.find?.(ct => ct.is_default)?.id || consultationTypes?.[0]?.id || '',
       ...defaultValues,
     },
   })
@@ -75,6 +79,7 @@ export function AppointmentFormDialog({
   const selectedProfessional = form.watch('professional_id')
   const selectedDate = form.watch('date')
   const selectedTime = form.watch('start_time')
+  const selectedConsultationType = form.watch('consultation_type_id')
 
   const handleSubmit = async (data: AppointmentFormData) => {
     setIsSubmitting(true)
@@ -98,8 +103,16 @@ export function AppointmentFormDialog({
     return patients.find(p => p.id === patientId)
   }
 
+  const getConsultationTypeInfo = (consultationTypeId: string) => {
+    return consultationTypes?.find?.(ct => ct.id === consultationTypeId)
+  }
+
   const selectedProfessionalInfo = selectedProfessional 
     ? getProfessionalInfo(selectedProfessional)
+    : null
+
+  const selectedConsultationTypeInfo = selectedConsultationType 
+    ? getConsultationTypeInfo(selectedConsultationType)
     : null
 
   const getDialogTitle = () => {
@@ -257,7 +270,7 @@ export function AppointmentFormDialog({
                       }}
                       professionalId={selectedProfessional}
                       minDate={new Date()}
-                      duration={30}
+                      duration={selectedConsultationTypeInfo?.duration || 30}
                     />
                     <FormMessage />
                   </FormItem>
@@ -265,32 +278,116 @@ export function AppointmentFormDialog({
               />
             </div>
 
-            {/* Appointment Type */}
-            <div className="space-y-2">
+            {/* Consultation Type Selection */}
+            <div className="space-y-4">
               <FormField
                 control={form.control}
-                name="type"
+                name="consultation_type_id"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Tipo de Consulta</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Selecione o tipo" />
+                          <SelectValue placeholder="Selecione o tipo de consulta" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {Object.entries(APPOINTMENT_TYPES).map(([value, { label }]) => (
-                          <SelectItem key={value} value={value}>
-                            {label}
-                          </SelectItem>
-                        ))}
+                        {consultationTypes && consultationTypes.length > 0 ? consultationTypes
+                          .filter(ct => ct.active)
+                          .sort((a, b) => {
+                            if (a.is_default && !b.is_default) return -1
+                            if (!a.is_default && b.is_default) return 1
+                            return a.name.localeCompare(b.name)
+                          })
+                          .map((consultationType) => (
+                            <SelectItem key={consultationType.id} value={consultationType.id}>
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className="w-3 h-3 rounded-full" 
+                                  style={{ backgroundColor: consultationType.color }}
+                                />
+                                <span>{consultationType.name}</span>
+                                {consultationType.is_default && (
+                                  <Badge variant="secondary" className="text-xs ml-1">
+                                    Padrão
+                                  </Badge>
+                                )}
+                              </div>
+                            </SelectItem>
+                          )) : (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground text-center">
+                            Nenhum tipo de consulta configurado
+                          </div>
+                        )}
                       </SelectContent>
                     </Select>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+              {/* Consultation Type Info Card */}
+              {selectedConsultationTypeInfo && (
+                <Card>
+                  <CardContent className="pt-4">
+                    <div className="flex items-start gap-3">
+                      <div 
+                        className="w-10 h-10 rounded-lg flex items-center justify-center"
+                        style={{ backgroundColor: `${selectedConsultationTypeInfo.color}20`, border: `2px solid ${selectedConsultationTypeInfo.color}40` }}
+                      >
+                        <div 
+                          className="w-4 h-4 rounded-full" 
+                          style={{ backgroundColor: selectedConsultationTypeInfo.color }}
+                        />
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2">
+                            {selectedConsultationTypeInfo.name}
+                            {selectedConsultationTypeInfo.is_default && (
+                              <Badge variant="secondary" className="text-xs">
+                                Padrão
+                              </Badge>
+                            )}
+                          </h4>
+                          {selectedConsultationTypeInfo.description && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {selectedConsultationTypeInfo.description}
+                            </p>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center gap-4 text-sm">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-4 w-4 text-blue-600" />
+                            <span>Duração: {formatDuration(selectedConsultationTypeInfo.duration)}</span>
+                          </div>
+                          {selectedConsultationTypeInfo.price && (
+                            <div className="flex items-center gap-1">
+                              <DollarSign className="h-4 w-4 text-green-600" />
+                              <span>Preço: {formatPrice(selectedConsultationTypeInfo.price)}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {selectedConsultationTypeInfo.requires_preparation && (
+                          <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                            <p className="text-sm font-medium text-amber-800 mb-1">
+                              ⚠️ Preparação Necessária
+                            </p>
+                            {selectedConsultationTypeInfo.preparation_instructions && (
+                              <p className="text-sm text-amber-700">
+                                {selectedConsultationTypeInfo.preparation_instructions}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             {/* Notes */}

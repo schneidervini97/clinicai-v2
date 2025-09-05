@@ -90,6 +90,70 @@ export class EvolutionService {
     }
   }
 
+  // Health Check and Verification Methods
+  static async checkInstanceExists(instanceName: string): Promise<{
+    exists: boolean
+    status?: 'close' | 'connecting' | 'open'
+    error?: string
+  }> {
+    try {
+      // Try to get connection state first (lighter call)
+      const result = await this.getConnectionState(instanceName)
+      
+      if (result && result.instance) {
+        return {
+          exists: true,
+          status: result.instance.state
+        }
+      }
+      
+      return { exists: false, error: 'Instance not found' }
+    } catch (error: any) {
+      console.log('Instance existence check failed:', error.message)
+      
+      // Check if it's a 404 error (instance doesn't exist)
+      if (error.message.includes('404') || error.message.includes('not found')) {
+        return { 
+          exists: false, 
+          error: 'Instance not found in Evolution API' 
+        }
+      }
+      
+      // For other errors, we can't determine existence
+      return { 
+        exists: false, 
+        error: `Unable to verify instance existence: ${error.message}` 
+      }
+    }
+  }
+
+  static async pingInstance(instanceName: string): Promise<{
+    healthy: boolean
+    responseTime?: number
+    error?: string
+  }> {
+    const startTime = Date.now()
+    
+    try {
+      // Use a lightweight endpoint to check if instance is responsive
+      await this.getConnectionState(instanceName)
+      const responseTime = Date.now() - startTime
+      
+      return {
+        healthy: true,
+        responseTime
+      }
+    } catch (error: any) {
+      const responseTime = Date.now() - startTime
+      
+      return {
+        healthy: false,
+        responseTime,
+        error: error.message
+      }
+    }
+  }
+
   static async connectInstance(instanceName: string): Promise<{
     pairingCode?: string | null
     code?: string
@@ -97,6 +161,140 @@ export class EvolutionService {
     count?: number
   }> {
     return this.request(`/instance/connect/${instanceName}`)
+  }
+
+  // Smart Reconnection Method
+  static async reconnectInstance(instanceName: string): Promise<{
+    success: boolean
+    qrResult?: {
+      pairingCode?: string | null
+      code?: string
+      base64?: string
+      count?: number
+    }
+    error?: string
+  }> {
+    try {
+      console.log('🔄 Starting smart reconnection for instance:', instanceName)
+      
+      // Step 1: Check if instance exists
+      const existsCheck = await this.checkInstanceExists(instanceName)
+      
+      if (!existsCheck.exists) {
+        return {
+          success: false,
+          error: 'Instance not found - needs to be recreated'
+        }
+      }
+      
+      // Step 2: Force logout to clear any existing session
+      try {
+        await this.logoutInstance(instanceName)
+        console.log('📤 Instance logged out successfully')
+      } catch (logoutError) {
+        console.log('⚠️ Logout error (might be expected):', logoutError)
+        // Continue - logout might fail if already disconnected
+      }
+      
+      // Step 3: Wait a moment for logout to process
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      
+      // Step 4: Request new QR Code
+      const qrResult = await this.connectInstance(instanceName)
+      console.log('📱 New QR Code requested successfully')
+      
+      return {
+        success: true,
+        qrResult
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Reconnection failed:', error.message)
+      
+      return {
+        success: false,
+        error: `Reconnection failed: ${error.message}`
+      }
+    }
+  }
+
+  // Force Instance Recreation (when instance doesn't exist)
+  static async recreateInstance(
+    instanceName: string, 
+    webhookUrl: string,
+    originalConfig?: CreateInstanceRequest
+  ): Promise<{
+    success: boolean
+    instance?: EvolutionInstance
+    qrResult?: {
+      pairingCode?: string | null
+      code?: string
+      base64?: string
+      count?: number
+    }
+    error?: string
+  }> {
+    try {
+      console.log('🆕 Starting instance recreation for:', instanceName)
+      
+      // Step 1: Try to delete existing instance (if any)
+      try {
+        await this.deleteInstance(instanceName)
+        console.log('🗑️ Existing instance deleted')
+        
+        // Wait for deletion to complete
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } catch (deleteError) {
+        console.log('⚠️ Delete error (might be expected if instance already gone):', deleteError)
+      }
+      
+      // Step 2: Create new instance with default config
+      const createConfig: CreateInstanceRequest = originalConfig || {
+        instanceName,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: true,
+        rejectCall: true,
+        groupsIgnore: true,
+        readMessages: false,
+        readStatus: true,
+        syncFullHistory: false,
+        webhook: {
+          url: webhookUrl,
+          byEvents: false,
+          base64: true,
+          events: [
+            'MESSAGES_UPSERT',
+            'MESSAGES_UPDATE', 
+            'CONNECTION_UPDATE',
+            'QRCODE_UPDATED',
+            'SEND_MESSAGE'
+          ]
+        }
+      }
+      
+      const instance = await this.createInstance(createConfig)
+      console.log('✅ New instance created successfully')
+      
+      // Step 3: Wait a moment then request QR Code
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      const qrResult = await this.connectInstance(instanceName)
+      console.log('📱 QR Code generated for new instance')
+      
+      return {
+        success: true,
+        instance,
+        qrResult
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Instance recreation failed:', error.message)
+      
+      return {
+        success: false,
+        error: `Recreation failed: ${error.message}`
+      }
+    }
   }
 
   // Webhook Configuration

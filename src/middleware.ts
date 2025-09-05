@@ -74,7 +74,25 @@ export async function middleware(request: NextRequest) {
         url.pathname = '/onboarding/subscription'
         return NextResponse.redirect(url)
       }
-      // If onboarding_status is 'completed', allow dashboard access
+      
+      // If onboarding is completed, check subscription status
+      if (onboardingStatus === 'completed') {
+        // Allow access to renewal page without subscription check
+        if (!pathname.startsWith('/dashboard/assinatura/renovar')) {
+          const { data: subscription } = await supabase
+            .from('subscriptions')
+            .select('status, plan_type')
+            .eq('user_id', user.id)
+            .single()
+          
+          // Block access if no subscription or subscription is inactive
+          if (!subscription || !['active', 'trialing'].includes(subscription.status)) {
+            const url = request.nextUrl.clone()
+            url.pathname = '/dashboard/assinatura/renovar'
+            return NextResponse.redirect(url)
+          }
+        }
+      }
     }
   }
 

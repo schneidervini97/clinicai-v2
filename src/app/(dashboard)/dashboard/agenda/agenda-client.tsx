@@ -13,17 +13,20 @@ import { createClient } from '@/lib/supabase/client'
 import { Appointment, Professional } from '@/features/appointments/types/appointment.types'
 import { AppointmentFormData } from '@/features/appointments/types/appointment.schema'
 import { Patient } from '@/features/patients/types/patient.types'
+import { ConsultationType } from '@/features/appointments/types/consultation-types'
 
 interface AgendaPageClientProps {
   initialAppointments: Appointment[]
   professionals: Professional[]
   patients: Patient[]
+  consultationTypes: ConsultationType[]
 }
 
 export function AgendaPageClient({ 
   initialAppointments, 
   professionals,
-  patients
+  patients,
+  consultationTypes
 }: AgendaPageClientProps) {
   const router = useRouter()
   const [appointments, setAppointments] = useState<Appointment[]>(initialAppointments)
@@ -199,6 +202,7 @@ export function AgendaPageClient({
         onOpenChange={setShowAppointmentForm}
         professionals={professionals}
         patients={patients}
+        consultationTypes={consultationTypes}
         onSubmit={handleAppointmentSubmit}
         onCreatePatient={handleCreatePatient}
         defaultValues={appointmentFormData}

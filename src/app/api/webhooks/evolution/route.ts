@@ -419,47 +419,106 @@ async function handleConnectionUpdate(
   supabase: any
 ) {
   try {
-    console.log('Processing connection update:', {
+    console.log('🔗 Connection update webhook received:', {
       instanceName,
       state: data.state,
-      phoneNumber: data.phoneNumber
+      phoneNumber: data.phoneNumber,
+      timestamp: new Date().toISOString(),
+      fullData: JSON.stringify(data, null, 2)
     })
-    
+
     const connectionState = data.state // 'open', 'close', 'connecting'
     
+    // Map Evolution API states to our internal status
     let status: 'connected' | 'disconnected' | 'qr_code' | 'error'
+    let shouldClearQR = false
+    let healthStatus = 'healthy'
+    
     switch (connectionState) {
       case 'open':
         status = 'connected'
+        shouldClearQR = true // Clear QR code when connected
+        console.log('✅ Instance connected successfully!')
         break
       case 'close':
         status = 'disconnected'
+        healthStatus = 'unhealthy'
+        console.log('❌ Instance disconnected')
         break
       case 'connecting':
         status = 'qr_code' // Connecting means waiting for QR scan
+        console.log('🔄 Instance connecting - awaiting QR scan')
         break
       default:
         status = 'error'
+        healthStatus = 'unhealthy'
+        console.warn('⚠️ Unknown connection state:', connectionState)
     }
 
-    // Update connection status
-    const { error } = await supabase
+    // Prepare update data
+    const updateData: any = {
+      status,
+      phone_number: data.phoneNumber || null,
+      updated_at: new Date().toISOString(),
+      last_health_check_at: new Date().toISOString(),
+      health_check_status: healthStatus,
+      health_check_count: 0, // Reset health check count on status change
+    }
+
+    // Clear QR code when successfully connected
+    if (shouldClearQR) {
+      updateData.qr_code = null
+      updateData.health_check_error = null
+      console.log('🗑️ Clearing QR code - connection established')
+    }
+
+    // Add error message for failed states
+    if (status === 'error') {
+      updateData.health_check_error = `Connection failed with state: ${connectionState}`
+    } else if (status === 'disconnected') {
+      updateData.health_check_error = 'WhatsApp instance disconnected'
+    } else {
+      updateData.health_check_error = null
+    }
+
+    // Update connection status in database
+    const { data: updateResult, error } = await supabase
       .from('whatsapp_connections')
-      .update({
-        status,
-        phone_number: data.phoneNumber || null,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('instance_name', instanceName)
+      .select()
 
     if (error) {
+      console.error('❌ Database update failed:', error)
       throw new Error(`Failed to update connection status: ${error.message}`)
     }
 
-    console.log('Connection status updated:', { instanceName, status })
+    if (!updateResult || updateResult.length === 0) {
+      console.warn('⚠️ No rows updated - instance not found:', instanceName)
+      return
+    }
+
+    console.log('✅ Connection status updated successfully:', {
+      instanceName,
+      newStatus: status,
+      phoneNumber: data.phoneNumber,
+      clearedQR: shouldClearQR,
+      healthStatus,
+      updatedRows: updateResult.length
+    })
+
+    // If we just connected, trigger health check to sync status
+    if (status === 'connected') {
+      console.log('🩺 Instance connected - health status synced')
+    }
 
   } catch (error) {
-    console.error('Error handling connection update:', error)
+    console.error('💥 Error handling connection update:', {
+      instanceName,
+      state: data.state,
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined
+    })
     throw error
   }
 }
@@ -470,57 +529,86 @@ async function handleQRCodeUpdate(
   supabase: any
 ) {
   try {
-    // Debug: Log the complete webhook data structure
-    console.log('QR Code webhook raw data:', {
-      type: typeof data,
-      keys: Object.keys(data),
-      fullData: JSON.stringify(data, null, 2)
-    })
-    
-    // Extract the base64 QR code from the object structure
-    const qrCodeObj = data.qrcode || data.qrCode || data.qr || data
-    const qrCodeStr = typeof qrCodeObj === 'object' && qrCodeObj?.base64
-      ? qrCodeObj.base64
-      : (typeof qrCodeObj === 'string' ? qrCodeObj : null)
-    
-    console.log('Processing QR code update:', {
+    console.log('📱 QR Code webhook received:', {
       instanceName,
-      availableFields: Object.keys(data),
-      qrCodeType: typeof qrCodeObj,
-      dataStructure: typeof qrCodeObj === 'object' && qrCodeObj ? Object.keys(qrCodeObj) : 'not_object',
-      qrCode: qrCodeStr ? `${qrCodeStr.substring(0, 50)}...` : 'null',
-      qrCodeLength: qrCodeStr?.length
+      dataType: typeof data,
+      dataKeys: Object.keys(data),
+      timestamp: new Date().toISOString()
     })
     
-    console.log('QR code extracted:', {
-      hasBase64: !!qrCodeStr,
+    // Extract the base64 QR code from various possible structures
+    let qrCodeStr: string | null = null
+    
+    // Try different extraction methods based on Evolution API versions
+    if (data.qrcode?.base64) {
+      qrCodeStr = data.qrcode.base64
+    } else if (data.qrCode?.base64) {
+      qrCodeStr = data.qrCode.base64
+    } else if (data.base64) {
+      qrCodeStr = data.base64
+    } else if (typeof data === 'string' && data.startsWith('data:image')) {
+      qrCodeStr = data
+    } else if (data.qr) {
+      qrCodeStr = data.qr
+    }
+    
+    console.log('🔍 QR Code extraction result:', {
+      found: !!qrCodeStr,
       isDataUrl: qrCodeStr?.startsWith('data:image'),
-      length: qrCodeStr?.length
+      length: qrCodeStr?.length,
+      preview: qrCodeStr ? `${qrCodeStr.substring(0, 50)}...` : null
     })
     
     if (!qrCodeStr) {
-      console.warn('No QR code found in webhook data:', data)
+      console.warn('❌ No QR code found in webhook data structure:', {
+        availableKeys: Object.keys(data),
+        sampleData: JSON.stringify(data, null, 2).substring(0, 500)
+      })
       return
     }
     
-    // Update QR code in database
-    const { error } = await supabase
+    // Ensure QR code is in proper data URL format
+    if (!qrCodeStr.startsWith('data:image')) {
+      qrCodeStr = `data:image/png;base64,${qrCodeStr}`
+    }
+    
+    // Update QR code in database with additional metadata
+    const { data: updateResult, error } = await supabase
       .from('whatsapp_connections')
       .update({
         qr_code: qrCodeStr,
         status: 'qr_code',
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        // Clear any previous errors when new QR code is generated
+        health_check_error: null,
+        health_check_status: 'healthy'
       })
       .eq('instance_name', instanceName)
+      .select()
 
     if (error) {
+      console.error('❌ Database update failed:', error)
       throw new Error(`Failed to update QR code: ${error.message}`)
     }
 
-    console.log('QR code updated for instance:', instanceName)
+    if (!updateResult || updateResult.length === 0) {
+      console.warn('⚠️ No rows updated - instance not found:', instanceName)
+      return
+    }
+
+    console.log('✅ QR code updated successfully:', {
+      instanceName,
+      status: 'qr_code',
+      qrCodeLength: qrCodeStr.length,
+      updatedRows: updateResult.length
+    })
 
   } catch (error) {
-    console.error('Error handling QR code update:', error)
+    console.error('💥 Error handling QR code update:', {
+      instanceName,
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined
+    })
     throw error
   }
 }

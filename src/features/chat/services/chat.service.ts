@@ -249,7 +249,7 @@ export class ChatService {
 
   static async updateConversation(
     conversationId: string,
-    updates: Partial<Pick<Conversation, 'patient_id' | 'patient_name' | 'status'>>,
+    updates: Partial<Pick<Conversation, 'patient_id' | 'patient_name' | 'status' | 'ai_assistant_enabled'>>,
     supabase: SupabaseClient
   ): Promise<Conversation> {
     try {
@@ -270,6 +270,33 @@ export class ChatService {
       return data
     } catch (error) {
       console.error('Error updating conversation:', error)
+      throw error
+    }
+  }
+
+  static async updateAssistantStatus(
+    conversationId: string,
+    enabled: boolean,
+    supabase: SupabaseClient
+  ): Promise<Conversation> {
+    try {
+      const { data, error } = await supabase
+        .from('conversations')
+        .update({
+          ai_assistant_enabled: enabled,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', conversationId)
+        .select()
+        .single()
+
+      if (error) {
+        throw new Error(`Failed to update AI assistant status: ${error.message}`)
+      }
+
+      return data
+    } catch (error) {
+      console.error('Error updating AI assistant status:', error)
       throw error
     }
   }

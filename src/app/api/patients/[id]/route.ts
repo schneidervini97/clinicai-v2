@@ -77,30 +77,11 @@ export async function PUT(
       )
     }
 
-    // Check for duplicates (excluding current patient)
-    if (validatedData.cpf && validatedData.cpf !== existingPatient.cpf) {
-      const cpfExists = await PatientService.checkCpfExists(validatedData.cpf, id)
-      if (cpfExists) {
-        return NextResponse.json(
-          { error: 'Já existe um paciente com este CPF' },
-          { status: 400 }
-        )
-      }
-    }
-
-    if (validatedData.email && validatedData.email !== existingPatient.email) {
-      const emailExists = await PatientService.checkEmailExists(validatedData.email, id)
-      if (emailExists) {
-        return NextResponse.json(
-          { error: 'Já existe um paciente com este email' },
-          { status: 400 }
-        )
-      }
-    }
+    // CPF and email uniqueness checking is now handled in the service layer
 
     // Update patient (remove id from update data)
     const { id: _patientId, ...updateData } = validatedData
-    const patient = await PatientService.update(id, updateData)
+    const patient = await PatientService.update(id, updateData, supabase)
 
     return NextResponse.json(patient)
   } catch (error: unknown) {
@@ -153,14 +134,14 @@ export async function DELETE(
 
     if (softDelete) {
       // Archive instead of delete
-      const patient = await PatientService.archive(id)
+      const patient = await PatientService.archive(id, supabase)
       return NextResponse.json({
         message: 'Paciente arquivado com sucesso',
         patient
       })
     } else {
       // Hard delete
-      await PatientService.delete(id)
+      await PatientService.delete(id, supabase)
       return NextResponse.json({
         message: 'Paciente excluído com sucesso'
       })
